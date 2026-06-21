@@ -1,0 +1,51 @@
+version: "3.9"
+
+volumes:
+  logs:
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-alpine
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      retries: 10
+
+  telemetry:
+    build:
+      context: .
+      dockerfile: telemetry/Dockerfile
+    environment:
+      LOG_FILE: /logs/app.log
+    volumes:
+      - logs:/logs
+
+  service_a:
+    build:
+      context: .
+      dockerfile: service_a/Dockerfile
+    ports:
+      - "50051:50051"
+    environment:
+      TELEMETRY_HOST: "telemetry:50051"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      telemetry:
+        condition: service_started
+    restart: on-failure
+
+  service_b:
+    build:
+      context: .
+      dockerfile: service_b/Dockerfile
+    environment:
+      TELEMETRY_HOST: "telemetry:50051"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      telemetry:
+        condition: service_started
+    restart: on-failure

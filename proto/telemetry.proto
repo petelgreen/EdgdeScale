@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+service Telemetry {
+  rpc WriteLog (LogRequest) returns (LogResponse);
+}
+
+message LogRequest {
+  string service  = 1;
+  string trace_id = 2;
+  string level    = 3;
+  string message  = 4;
+}
+
+message LogResponse { bool ok = 1; }

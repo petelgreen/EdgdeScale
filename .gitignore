@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*_pb2.py
+*_pb2_grpc.py

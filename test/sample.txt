@@ -1,0 +1,20 @@
+EdgeScale is a distributed pipeline designed to process telemetry data from large fleets of edge devices in real time.
+Each device sends structured payloads over gRPC to a central ingestion service, which forwards the work to a pool of
+background workers through a RabbitMQ broker. The workers process each job independently and return results using the
+correlation ID pattern, allowing the ingestion service to match responses back to the original requests.
+
+The system is built around three core operations. The first is a heartbeat, a fire-and-forget ping that lets the server
+track device liveness without blocking. The second is text analysis, where a device submits a block of text and receives
+a word count in return. The third is file upload and analysis, where a device streams a file in fixed-size chunks and
+the server accumulates the chunks on the worker side before returning the final word count once the last chunk arrives.
+
+Reliability is handled at multiple layers. RabbitMQ queues are declared as durable so jobs survive broker restarts.
+Workers use a prefetch limit to avoid being overwhelmed during traffic spikes. The gRPC server enforces per-request
+timeouts so that hung workers do not block client connections indefinitely. Docker Compose health checks ensure that
+RabbitMQ is fully ready before either service attempts to connect, preventing startup race conditions.
+
+The design keeps the two services fully decoupled. Service A knows nothing about how the work is done; it only knows
+which queue to publish to and which queue to listen on for results. Service B knows nothing about gRPC or clients;
+it simply consumes tasks, processes them, and publishes results back to whatever reply address the message specifies.
+This separation makes it straightforward to scale Service B horizontally by adding more worker containers without
+changing any other part of the system.
