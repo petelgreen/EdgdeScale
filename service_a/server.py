@@ -60,8 +60,7 @@ async def main() -> None:
     tel.log(SERVICE, tel.new_trace(), "startup", detail=f"instance_id={instance_id}")
 
     connection = await aio_pika.connect_robust(RABBITMQ_URL)
-    channel = await connection.channel()
-    await channel.set_confirm_select()
+    channel = await connection.channel(publisher_confirms=True)
 
     # text queue
     await channel.declare_queue(TEXT_TASKS_QUEUE, durable=True)
