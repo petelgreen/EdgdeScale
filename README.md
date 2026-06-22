@@ -1,5 +1,7 @@
 # EdgeScale
 
+> **Note:** This implementation intentionally deviates from the assignment spec on one point — Service B is stateless. The assignment asks the File Worker to accumulate the running word count and signal a final result. I chose to keep workers stateless and move aggregation into Service A instead. The reasoning is in the [Design decision](#design-decision-stateless-service-b-for-file-uploads) section below. The `stateful-file-worker` branch implements the spec exactly.
+
 Processes text and files sent from devices over gRPC, using RabbitMQ to hand the work off to a background worker.
 
 ## What's in here
@@ -35,10 +37,10 @@ Device → Service A → [file_tasks] (one msg per chunk) → Service B (any wor
 
 ### Queue layout
 
-| Queue | Type | Who reads it |
-|-------|------|-------------|
-| `text_tasks` | shared, durable | all Service B workers |
-| `file_tasks` | shared, durable | all Service B workers |
+| Queue                                  | Type                            | Who reads it                               |
+| -------------------------------------- | ------------------------------- | ------------------------------------------ |
+| `text_tasks`                           | shared, durable                 | all Service B workers                      |
+| `file_tasks`                           | shared, durable                 | all Service B workers                      |
 | `service_a_<instance_id>_text_results` | private, exclusive, auto-delete | the one Service A instance that created it |
 | `service_a_<instance_id>_file_results` | private, exclusive, auto-delete | the one Service A instance that created it |
 
