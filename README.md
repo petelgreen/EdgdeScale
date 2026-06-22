@@ -44,9 +44,21 @@ Device → Service A → [file_tasks] (one msg per chunk) → Service B (any wor
 
 **Why per-instance result queues?** When multiple Service A instances run, RabbitMQ would round-robin results across all consumers of a shared result queue. A result could land on the wrong instance — the one with no `Future` waiting for that `correlation_id` — and the original request would time out. Each instance generates a UUID at startup, creates its own exclusive result queues, and stamps every task with `reply_to`. Workers send results straight back to the originating instance.
 
-**Why stateless workers for file uploads?** The previous design had each worker accumulate chunk state in memory (`_file_state`). With multiple workers, RabbitMQ distributes chunks round-robin, so no single worker ever sees the full file. The fix moves aggregation to Service A: each chunk message carries a `chunk_index`; any worker processes it independently and returns the chunk word count; Service A sums chunk results by `correlation_id` and resolves the request when all `total_chunks` results are in. Different file uploads are still processed by different workers in parallel.
-
 **Word count accuracy:** chunks are split at word boundaries by carrying any partial word at the end of each chunk into the next one (`split_at_word_boundary` + `leftover` in `service_a/handlers/file.py`). Words that span a raw gRPC chunk boundary are not double-counted.
+
+## Design decision: stateless Service B for file uploads
+
+The assignment describes a File Worker that accumulates the running word count and signals one final result. This branch deliberately deviates from that description. The `stateful-file-worker` branch implements it literally if you want to compare.
+
+The reason: **stateful workers and standard RabbitMQ queues are incompatible at scale.** With a shared queue and multiple workers, RabbitMQ distributes messages round-robin. No single worker ever sees all chunks of one file, so no single worker can keep an accurate running total. Making workers stateful forces you to also solve sticky routing — which means adding a consistent-hash exchange plugin, partition queues, and a partition index env var on every worker instance. That is a significant amount of infrastructure complexity added purely to satisfy a design choice that doesn't survive horizontal scaling.
+
+This design instead keeps workers completely stateless and moves aggregation into Service A, where it naturally belongs:
+
+- **Service A owns the request context.** It generated the `correlation_id`, it holds the waiting `Future`, it knows the timeout. Aggregating results there requires no new infrastructure — just an in-memory dict keyed by `correlation_id` that is cleaned up when the request completes.
+- **Any worker can process any chunk.** No sticky routing, no partitions, no plugins. Adding a worker instance immediately increases throughput without any reconfiguration.
+- **No state to lose on a worker crash.** A stateful worker that dies mid-file takes the running word count with it and the upload times out. Stateless workers restart cleanly — unprocessed chunks stay in RabbitMQ and are redelivered to the next available worker.
+- **No stale-state cleanup needed.** Stateful workers need a TTL sweep to purge incomplete file state from crashed or timed-out uploads. Stateless workers have nothing to clean up.
+- **Out-of-order chunk results are handled for free.** The aggregator in Service A tracks received chunk indices in a set and resolves the Future when all are accounted for — regardless of arrival order. A stateful worker relying on in-order delivery would need the same logic anyway.
 
 ## File structure
 
