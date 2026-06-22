@@ -1,6 +1,6 @@
 # EdgeScale — `stateful-file-worker` branch
 
-> This branch follows the assignment spec literally: Service B keeps the running word count and sends one final result per file. All chunks of one upload are routed to the same worker via a RabbitMQ consistent-hash exchange.
+> This branch follows the assignment spec exactly: Service B keeps the running word count and sends one final result per file. All chunks of one upload are routed to the same worker via a RabbitMQ consistent-hash exchange.
 >
 > The `main` branch uses a stateless Service B design which deviates from the spec but is architecturally stronger — see that branch's README for the reasoning.
 
