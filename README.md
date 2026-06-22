@@ -46,7 +46,38 @@ Device → Service A → [file_tasks] (one msg per chunk) → Service B (any wor
 
 **Why stateless workers for file uploads?** The previous design had each worker accumulate chunk state in memory (`_file_state`). With multiple workers, RabbitMQ distributes chunks round-robin, so no single worker ever sees the full file. The fix moves aggregation to Service A: each chunk message carries a `chunk_index`; any worker processes it independently and returns the chunk word count; Service A sums chunk results by `correlation_id` and resolves the request when all `total_chunks` results are in. Different file uploads are still processed by different workers in parallel.
 
-**Known limitation:** word counts at chunk boundaries may be slightly off. If a chunk ends mid-word (e.g. `"hel"` / `"lo"`), each half is counted as a separate word. For typical text-file chunks this effect is small, but it is not byte-perfect. Fix: accumulate a small suffix/prefix overlap, or stream complete lines — not done here to keep the implementation simple.
+**Word count accuracy:** chunks are split at word boundaries by carrying any partial word at the end of each chunk into the next one (`split_at_word_boundary` + `leftover` in `service_a/handlers/file.py`). Words that span a raw gRPC chunk boundary are not double-counted.
+
+## File structure
+
+```
+EdgeScale/
+├── proto/
+│   ├── edgescale.proto        # service A contract
+│   └── telemetry.proto        # telemetry contract
+├── service_a/
+│   ├── server.py              # gRPC server entry point
+│   └── handlers/
+│       ├── text.py            # text analysis
+│       ├── file.py            # file upload (chunking + aggregation)
+│       ├── errors.py          # error handling + gRPC abort helpers
+│       └── common.py          # shared helpers
+├── service_b/
+│   └── worker.py              # RabbitMQ consumer, word counting
+├── telemetry/
+│   └── server.py              # log collector, writes to file
+├── lib/
+│   ├── config.py              # env vars
+│   ├── consts.py              # queue names, timeouts
+│   └── telemetry_client.py    # log sender
+├── test/
+│   └── test_client.py         # manual smoke test
+├── edgescale_pb2.py           # generated
+├── edgescale_pb2_grpc.py      # generated
+├── telemetry_pb2.py           # generated
+├── telemetry_pb2_grpc.py      # generated
+└── docker-compose.yml
+```
 
 ## Run it
 

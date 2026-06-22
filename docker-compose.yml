@@ -5,7 +5,9 @@ volumes:
 
 services:
   rabbitmq:
-    image: rabbitmq:3-alpine
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 5s

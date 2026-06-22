@@ -60,6 +60,7 @@ async def main() -> None:
 
     connection = await aio_pika.connect_robust(RABBITMQ_URL)
     channel = await connection.channel()
+    await channel.set_confirm_select()
 
     await asyncio.gather(
         channel.declare_queue(TEXT_TASKS_QUEUE, durable=True),
