@@ -8,6 +8,8 @@ services:
     image: rabbitmq:3-management-alpine
     ports:
       - "15672:15672"
+    volumes:
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 5s
@@ -31,6 +33,7 @@ services:
     environment:
       TELEMETRY_HOST: "telemetry:50051"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      FILE_TASK_PARTITIONS: "4"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -38,13 +41,59 @@ services:
         condition: service_started
     restart: on-failure
 
-  service_b:
+  service_b_0:
     build:
       context: .
       dockerfile: service_b/Dockerfile
     environment:
       TELEMETRY_HOST: "telemetry:50051"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      FILE_WORKER_PARTITION_INDEX: "0"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      telemetry:
+        condition: service_started
+    restart: on-failure
+
+  service_b_1:
+    build:
+      context: .
+      dockerfile: service_b/Dockerfile
+    environment:
+      TELEMETRY_HOST: "telemetry:50051"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      FILE_WORKER_PARTITION_INDEX: "1"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      telemetry:
+        condition: service_started
+    restart: on-failure
+
+  service_b_2:
+    build:
+      context: .
+      dockerfile: service_b/Dockerfile
+    environment:
+      TELEMETRY_HOST: "telemetry:50051"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      FILE_WORKER_PARTITION_INDEX: "2"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      telemetry:
+        condition: service_started
+    restart: on-failure
+
+  service_b_3:
+    build:
+      context: .
+      dockerfile: service_b/Dockerfile
+    environment:
+      TELEMETRY_HOST: "telemetry:50051"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      FILE_WORKER_PARTITION_INDEX: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy

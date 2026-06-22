@@ -1,5 +1,7 @@
 TEXT_TASKS_QUEUE = "text_tasks"
-FILE_TASKS_QUEUE = "file_tasks"
+FILE_TASKS_EXCHANGE = "file_tasks_hash_exchange"
+FILE_TASKS_QUEUE_PREFIX = "file_tasks"
 
 TEXT_ANALYZE_TIMEOUT = 30.0
 FILE_ANALYZE_TIMEOUT = 60.0
+FILE_STATE_TTL = 120.0

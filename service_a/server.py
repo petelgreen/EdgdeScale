@@ -4,20 +4,21 @@ import aio_pika
 import grpc
 import edgescale_pb2
 import edgescale_pb2_grpc
-from lib.config import RABBITMQ_URL, GRPC_PORT, MAX_QUEUE_DEPTH
-from lib.consts import TEXT_TASKS_QUEUE, FILE_TASKS_QUEUE
+from lib.config import RABBITMQ_URL, GRPC_PORT, MAX_QUEUE_DEPTH, FILE_TASK_PARTITIONS
+from lib.consts import TEXT_TASKS_QUEUE, FILE_TASKS_EXCHANGE, FILE_TASKS_QUEUE_PREFIX
 from handlers import text, file as file_handler, errors as err
 from handlers.common import SERVICE, queue_depth
 import lib.telemetry_client as tel
 
 
 class ServiceA(edgescale_pb2_grpc.ServiceAServicer):
-    def __init__(self, channel: aio_pika.Channel, text_reply_q: str, file_reply_q: str) -> None:
+    def __init__(self, channel: aio_pika.Channel, text_reply_q: str, file_reply_q: str,
+                 file_exchange: aio_pika.Exchange) -> None:
         self._channel = channel
         self._pending: dict[str, asyncio.Future] = {}
-        self._file_agg: dict[str, dict] = {}
         self._text_reply_q = text_reply_q
         self._file_reply_q = file_reply_q
+        self._file_exchange = file_exchange
 
     async def _check_backpressure(self, queue_name: str, context) -> bool:
         depth = await queue_depth(self._channel, queue_name)
@@ -38,17 +39,17 @@ class ServiceA(edgescale_pb2_grpc.ServiceAServicer):
         return await text.analyze_text(self._channel, self._text_reply_q, self._pending, request, context)
 
     async def UploadAndAnalyzeFile(self, request_iterator, context):
-        if not await self._check_backpressure(FILE_TASKS_QUEUE, context):
+        if not await self._check_backpressure(f"{FILE_TASKS_QUEUE_PREFIX}_0", context):
             return
         return await file_handler.upload_and_analyze_file(
-            self._channel, self._file_reply_q, self._file_agg, self._pending, request_iterator, context
+            self._file_exchange, self._file_reply_q, self._pending, request_iterator, context
         )
 
     async def on_text_result(self, message: aio_pika.IncomingMessage) -> None:
         await err.consume(message, SERVICE, "text_result", text.on_text_result, self._pending)
 
-    async def on_file_chunk_result(self, message: aio_pika.IncomingMessage) -> None:
-        await err.consume(message, SERVICE, "file_chunk_result", file_handler.on_file_chunk_result, self._file_agg, self._pending)
+    async def on_file_result(self, message: aio_pika.IncomingMessage) -> None:
+        await err.consume(message, SERVICE, "file_result", file_handler.on_file_result, self._pending)
 
 
 async def main() -> None:
@@ -62,10 +63,21 @@ async def main() -> None:
     channel = await connection.channel()
     await channel.set_confirm_select()
 
-    await asyncio.gather(
-        channel.declare_queue(TEXT_TASKS_QUEUE, durable=True),
-        channel.declare_queue(FILE_TASKS_QUEUE, durable=True),
+    # text queue
+    await channel.declare_queue(TEXT_TASKS_QUEUE, durable=True)
+
+    # consistent-hash exchange for file chunks
+    file_exchange = await channel.declare_exchange(
+        FILE_TASKS_EXCHANGE, type="x-consistent-hash", durable=True
     )
+    tel.log(SERVICE, tel.new_trace(), "exchange_declared", detail=f"exchange={FILE_TASKS_EXCHANGE}")
+
+    # partition queues — each bound with equal weight ("1")
+    for i in range(FILE_TASK_PARTITIONS):
+        q_name = f"{FILE_TASKS_QUEUE_PREFIX}_{i}"
+        q = await channel.declare_queue(q_name, durable=True)
+        await q.bind(file_exchange, routing_key="1")
+        tel.log(SERVICE, tel.new_trace(), "partition_bound", detail=f"queue={q_name}")
 
     # ponytail: exclusive+auto_delete = queue lives only while this instance is connected
     text_result_q, file_result_q = await asyncio.gather(
@@ -73,14 +85,11 @@ async def main() -> None:
         channel.declare_queue(file_reply_q, exclusive=True, auto_delete=True),
     )
 
-    tel.log(SERVICE, tel.new_trace(), "queue_init", detail=f"text_reply={text_reply_q}")
-    tel.log(SERVICE, tel.new_trace(), "queue_init", detail=f"file_reply={file_reply_q}")
-
-    servicer = ServiceA(channel, text_reply_q, file_reply_q)
+    servicer = ServiceA(channel, text_reply_q, file_reply_q, file_exchange)
 
     await asyncio.gather(
         text_result_q.consume(servicer.on_text_result),
-        file_result_q.consume(servicer.on_file_chunk_result),
+        file_result_q.consume(servicer.on_file_result),
     )
 
     server = grpc.aio.server()

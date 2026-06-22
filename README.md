@@ -26,27 +26,32 @@ Device → Service A → [text_tasks queue] → Service B
                   ←  [service_a_<id>_text_results] ←
 ```
 
-File uploads are chunked. Each chunk is a separate message; any worker can process any chunk. Service A collects the per-chunk word counts and sums them when all chunks are accounted for.
+File uploads are chunked. Service A streams each chunk through a consistent-hash exchange so that all chunks of one file land on the same partition queue, consumed by the same worker. Service B accumulates the running word count and sends one final result when the end-of-stream marker arrives.
 
 ```
-Device → Service A → [file_tasks] (one msg per chunk) → Service B (any worker)
-                  ←  [service_a_<id>_file_results] (one result per chunk) ←
+Device → Service A → [file_tasks_hash_exchange] (routing_key=correlation_id)
+                           ↓ consistent hash
+               [file_tasks_0] [file_tasks_1] [file_tasks_2] [file_tasks_3]
+                    ↓               ↓               ↓               ↓
+               worker_0        worker_1        worker_2        worker_3
+                    └─── one final result ──→ [service_a_<id>_file_results] ──→ Service A
 ```
 
 ### Queue layout
 
-| Queue | Type | Who reads it |
-|-------|------|-------------|
-| `text_tasks` | shared, durable | all Service B workers |
-| `file_tasks` | shared, durable | all Service B workers |
-| `service_a_<instance_id>_text_results` | private, exclusive, auto-delete | the one Service A instance that created it |
-| `service_a_<instance_id>_file_results` | private, exclusive, auto-delete | the one Service A instance that created it |
+| Queue / Exchange | Type | Purpose |
+|-----------------|------|---------|
+| `text_tasks` | queue, durable | all Service B workers compete for text jobs |
+| `file_tasks_hash_exchange` | x-consistent-hash exchange | routes file chunks by `correlation_id` |
+| `file_tasks_0` … `file_tasks_3` | queues, durable | one worker per partition — ensures all chunks of one file reach the same worker |
+| `service_a_<instance_id>_text_results` | private, exclusive, auto-delete | text results back to the originating Service A instance |
+| `service_a_<instance_id>_file_results` | private, exclusive, auto-delete | single final file result back to the originating Service A instance |
 
-**Why per-instance result queues?** When multiple Service A instances run, RabbitMQ would round-robin results across all consumers of a shared result queue. A result could land on the wrong instance — the one with no `Future` waiting for that `correlation_id` — and the original request would time out. Each instance generates a UUID at startup, creates its own exclusive result queues, and stamps every task with `reply_to`. Workers send results straight back to the originating instance.
+**Why consistent-hash exchange for files?** Service B keeps a running word count in memory keyed by `correlation_id`. For that to work, every chunk of the same upload must reach the same worker process. Using `correlation_id` as the routing key on a consistent-hash exchange guarantees this — RabbitMQ hashes the key and always routes it to the same partition queue, which has exactly one consumer.
 
-**Why stateless workers for file uploads?** The previous design had each worker accumulate chunk state in memory (`_file_state`). With multiple workers, RabbitMQ distributes chunks round-robin, so no single worker ever sees the full file. The fix moves aggregation to Service A: each chunk message carries a `chunk_index`; any worker processes it independently and returns the chunk word count; Service A sums chunk results by `correlation_id` and resolves the request when all `total_chunks` results are in. Different file uploads are still processed by different workers in parallel.
+**Why per-instance result queues?** Multiple Service A instances would each receive results from RabbitMQ round-robin if they shared one result queue. A result could land on the wrong instance — the one with no `Future` waiting for that `correlation_id`. Each instance generates a UUID at startup and stamps every task message with `reply_to`, so workers send results directly back to the right instance.
 
-**Word count accuracy:** chunks are split at word boundaries by carrying any partial word at the end of each chunk into the next one (`split_at_word_boundary` + `leftover` in `service_a/handlers/file.py`). Words that span a raw gRPC chunk boundary are not double-counted.
+**Word count accuracy:** Service A splits chunks at word boundaries before publishing (`split_at_word_boundary` + `leftover`). Words that span a raw gRPC chunk boundary are carried into the next published message, so they are never double-counted. The final end-of-stream message flushes any remaining text.
 
 ## File structure
 
