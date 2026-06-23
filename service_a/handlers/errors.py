@@ -11,20 +11,11 @@ PUBLISH_FAILED     = "publish_failed"
 CLIENT_CANCELLED   = "client_cancelled"
 INVALID_INPUT      = "invalid_input"
 CHUNK_TOO_LARGE    = "chunk_too_large"
-FILE_TOO_LARGE     = "file_too_large"
 DECODE_ERROR       = "decode_error"
 INTERNAL_ERROR     = "internal_error"
 
-# ponytail: 1 MB / 10 MB ceilings — make env-configurable if operators need to tune
-MAX_CHUNK_BYTES = 1 * 1024 * 1024
-MAX_FILE_BYTES  = 10 * 1024 * 1024
-
 
 class ChunkTooLargeError(Exception):
-    pass
-
-
-class FileTooLargeError(Exception):
     pass
 
 
@@ -49,9 +40,6 @@ async def handle_rpc(context, service: str, cid: str, operation: str, coro) -> N
     """Global gRPC error handler: catches all exceptions, logs to telemetry, aborts context."""
     try:
         return await coro
-    except FileTooLargeError:
-        await abort(context, grpc.StatusCode.INVALID_ARGUMENT, FILE_TOO_LARGE,
-                    service=service, cid=cid, operation=operation)
     except ChunkTooLargeError:
         await abort(context, grpc.StatusCode.INVALID_ARGUMENT, CHUNK_TOO_LARGE,
                     service=service, cid=cid, operation=operation)

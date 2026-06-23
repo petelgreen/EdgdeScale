@@ -1,7 +1,7 @@
 import asyncio
 import aio_pika
 import edgescale_pb2
-from lib.consts import FILE_TASKS_QUEUE, FILE_ANALYZE_TIMEOUT
+from lib.consts import FILE_TASKS_QUEUE, FILE_ANALYZE_TIMEOUT, MAX_CHUNK_BYTES
 import lib.telemetry_client as tel
 from handlers.common import SERVICE, new_pending
 from handlers import errors as err
@@ -17,12 +17,8 @@ def split_at_word_boundary(text: str) -> tuple[str, str]:
 async def _stream_and_wait(channel, reply_q, cid, future, file_agg, request_iterator):
     chunk_index = 0
     leftover = ""
-    total_bytes = 0
     async for chunk in request_iterator:
-        total_bytes += len(chunk.data)
-        if total_bytes > err.MAX_FILE_BYTES:
-            raise err.FileTooLargeError()
-        if len(chunk.data) > err.MAX_CHUNK_BYTES:
+        if len(chunk.data) > MAX_CHUNK_BYTES:
             raise err.ChunkTooLargeError()
         text = leftover + chunk.data.decode("utf-8")
         chunk_text, leftover = split_at_word_boundary(text)

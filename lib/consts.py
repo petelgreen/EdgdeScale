@@ -3,3 +3,5 @@ FILE_TASKS_QUEUE = "file_tasks"
 
 TEXT_ANALYZE_TIMEOUT = 30.0
 FILE_ANALYZE_TIMEOUT = 60.0
+
+MAX_CHUNK_BYTES = 10 * 1024 * 1024  # 10 MB max per chunk (spec: chunks 1-10MB)
